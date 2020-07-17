@@ -747,7 +747,8 @@ func (c *Client) Reset(ctx context.Context) error {
 }
 
 type queryCfg struct {
-	enableTracing bool
+	enableTracing    bool
+	auditResultsOnly bool
 }
 
 type QueryOpt func(*queryCfg)
@@ -755,6 +756,12 @@ type QueryOpt func(*queryCfg)
 func Tracing(enabled bool) QueryOpt {
 	return func(cfg *queryCfg) {
 		cfg.enableTracing = enabled
+	}
+}
+
+func AuditResultsOnly(enabled bool) QueryOpt {
+	return func(cfg *queryCfg) {
+		cfg.auditResultsOnly = enabled
 	}
 }
 
@@ -780,11 +787,12 @@ TargetLoop:
 			continue
 		}
 		input := map[string]interface{}{"review": review}
-		resp, err := c.backend.driver.Query(ctx, fmt.Sprintf(`hooks["%s"].violation`, name), input, drivers.Tracing(cfg.enableTracing))
+		resp, err := c.backend.driver.Query(ctx, fmt.Sprintf(`hooks["%s"].violation`, name), input, drivers.Tracing(cfg.enableTracing), drivers.AuditResultsOnly(true))
 		if err != nil {
 			errMap[name] = err
 			continue
 		}
+
 		for _, r := range resp.Results {
 			if err := target.HandleViolation(r); err != nil {
 				errMap[name] = err
@@ -797,6 +805,7 @@ TargetLoop:
 	if len(errMap) == 0 {
 		return responses, nil
 	}
+
 	return responses, errMap
 }
 

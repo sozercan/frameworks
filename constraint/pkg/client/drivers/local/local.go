@@ -350,6 +350,15 @@ func (d *driver) Query(ctx context.Context, path string, input interface{}, opts
 		}
 		results = append(results, result)
 	}
+
+	if cfg.AuditResultsOnly {
+		return &types.Response{
+			Trace:   nil,
+			Results: results,
+			Input:   nil,
+		}, nil
+	}
+
 	i := string(inp)
 	return &types.Response{
 		Trace:   trace,

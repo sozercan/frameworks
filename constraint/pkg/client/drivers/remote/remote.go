@@ -189,6 +189,10 @@ func (d *driver) Query(ctx context.Context, path string, input interface{}, opts
 	}
 	resp := &ctypes.Response{Results: results}
 
+	if cfg.AuditResultsOnly {
+		return resp, nil
+	}
+
 	if (d.traceEnabled || cfg.TracingEnabled) && response.Explanation != nil {
 		var t interface{}
 		if err := json.Unmarshal(response.Explanation, &t); err != nil {
@@ -201,6 +205,7 @@ func (d *driver) Query(ctx context.Context, path string, input interface{}, opts
 		tr := string(trace)
 		resp.Trace = &tr
 	}
+
 	inp, err := json.MarshalIndent(input, "", "   ")
 	if err != nil {
 		return nil, err

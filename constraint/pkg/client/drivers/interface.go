@@ -7,7 +7,8 @@ import (
 )
 
 type QueryCfg struct {
-	TracingEnabled bool
+	TracingEnabled   bool
+	AuditResultsOnly bool
 }
 
 type QueryOpt func(*QueryCfg)
@@ -15,6 +16,12 @@ type QueryOpt func(*QueryCfg)
 func Tracing(enabled bool) QueryOpt {
 	return func(cfg *QueryCfg) {
 		cfg.TracingEnabled = enabled
+	}
+}
+
+func AuditResultsOnly(enabled bool) QueryOpt {
+	return func(cfg *QueryCfg) {
+		cfg.AuditResultsOnly = enabled
 	}
 }
 
