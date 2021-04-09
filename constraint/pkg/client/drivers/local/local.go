@@ -324,8 +324,8 @@ func (d *driver) DeleteData(ctx context.Context, path string) (bool, error) {
 }
 
 func (d *driver) eval(ctx context.Context, path string, input interface{}, cfg *drivers.QueryCfg) (rego.ResultSet, *string, error) {
-	d.modulesMux.RLock()
-	defer d.modulesMux.RUnlock()
+	d.modulesMux.Lock()
+	defer d.modulesMux.Unlock()
 	args := []func(*rego.Rego){
 		rego.Compiler(d.compiler),
 		rego.Store(d.storage),
