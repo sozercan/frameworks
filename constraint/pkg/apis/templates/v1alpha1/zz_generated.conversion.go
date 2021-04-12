@@ -23,7 +23,7 @@ import (
 
 	templates "github.com/open-policy-agent/frameworks/constraint/pkg/core/templates"
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
-	v1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	conversion "k8s.io/apimachinery/pkg/conversion"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
@@ -151,7 +151,7 @@ func RegisterConversions(s *runtime.Scheme) error {
 func autoConvert_v1alpha1_ByPodStatus_To_templates_ByPodStatus(in *ByPodStatus, out *templates.ByPodStatus, s conversion.Scope) error {
 	out.ID = in.ID
 	out.ObservedGeneration = in.ObservedGeneration
-	out.Errors = *(*[]*templates.CreateCRDError)(unsafe.Pointer(&in.Errors))
+	out.Errors = *(*[]templates.CreateCRDError)(unsafe.Pointer(&in.Errors))
 	return nil
 }
 
@@ -163,7 +163,7 @@ func Convert_v1alpha1_ByPodStatus_To_templates_ByPodStatus(in *ByPodStatus, out 
 func autoConvert_templates_ByPodStatus_To_v1alpha1_ByPodStatus(in *templates.ByPodStatus, out *ByPodStatus, s conversion.Scope) error {
 	out.ID = in.ID
 	out.ObservedGeneration = in.ObservedGeneration
-	out.Errors = *(*[]*CreateCRDError)(unsafe.Pointer(&in.Errors))
+	out.Errors = *(*[]CreateCRDError)(unsafe.Pointer(&in.Errors))
 	return nil
 }
 
@@ -340,7 +340,7 @@ func Convert_templates_ConstraintTemplateSpec_To_v1alpha1_ConstraintTemplateSpec
 
 func autoConvert_v1alpha1_ConstraintTemplateStatus_To_templates_ConstraintTemplateStatus(in *ConstraintTemplateStatus, out *templates.ConstraintTemplateStatus, s conversion.Scope) error {
 	out.Created = in.Created
-	out.ByPod = *(*[]*templates.ByPodStatus)(unsafe.Pointer(&in.ByPod))
+	out.ByPod = *(*[]templates.ByPodStatus)(unsafe.Pointer(&in.ByPod))
 	return nil
 }
 
@@ -351,7 +351,7 @@ func Convert_v1alpha1_ConstraintTemplateStatus_To_templates_ConstraintTemplateSt
 
 func autoConvert_templates_ConstraintTemplateStatus_To_v1alpha1_ConstraintTemplateStatus(in *templates.ConstraintTemplateStatus, out *ConstraintTemplateStatus, s conversion.Scope) error {
 	out.Created = in.Created
-	out.ByPod = *(*[]*ByPodStatus)(unsafe.Pointer(&in.ByPod))
+	out.ByPod = *(*[]ByPodStatus)(unsafe.Pointer(&in.ByPod))
 	return nil
 }
 
@@ -434,10 +434,8 @@ func autoConvert_v1alpha1_Validation_To_templates_Validation(in *Validation, out
 	if in.OpenAPIV3Schema != nil {
 		in, out := &in.OpenAPIV3Schema, &out.OpenAPIV3Schema
 		*out = new(apiextensions.JSONSchemaProps)
-		// TODO: Inefficient conversion - can we improve it?
-		if err := s.Convert(*in, *out, 0); err != nil {
-			return err
-		}
+		// FIXME: Provide conversion function to convert v1.JSONSchemaProps to apiextensions.JSONSchemaProps
+		compileErrorOnMissingConversion()
 	} else {
 		out.OpenAPIV3Schema = nil
 	}
@@ -452,11 +450,9 @@ func Convert_v1alpha1_Validation_To_templates_Validation(in *Validation, out *te
 func autoConvert_templates_Validation_To_v1alpha1_Validation(in *templates.Validation, out *Validation, s conversion.Scope) error {
 	if in.OpenAPIV3Schema != nil {
 		in, out := &in.OpenAPIV3Schema, &out.OpenAPIV3Schema
-		*out = new(v1beta1.JSONSchemaProps)
-		// TODO: Inefficient conversion - can we improve it?
-		if err := s.Convert(*in, *out, 0); err != nil {
-			return err
-		}
+		*out = new(v1.JSONSchemaProps)
+		// FIXME: Provide conversion function to convert apiextensions.JSONSchemaProps to v1.JSONSchemaProps
+		compileErrorOnMissingConversion()
 	} else {
 		out.OpenAPIV3Schema = nil
 	}

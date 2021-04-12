@@ -71,13 +71,13 @@ type ByPodStatus struct {
 	// a unique identifier for the pod that wrote the status
 	ID                 string            `json:"id,omitempty"`
 	ObservedGeneration int64             `json:"observedGeneration,omitempty"`
-	Errors             []*CreateCRDError `json:"errors,omitempty"`
+	Errors             []CreateCRDError `json:"errors,omitempty"`
 }
 
 // ConstraintTemplateStatus defines the observed state of ConstraintTemplate
 type ConstraintTemplateStatus struct {
 	Created bool           `json:"created,omitempty"`
-	ByPod   []*ByPodStatus `json:"byPod,omitempty"`
+	ByPod   []ByPodStatus `json:"byPod,omitempty"`
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 }

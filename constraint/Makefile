@@ -30,7 +30,9 @@ install: manifests
 
 # Generate manifests e.g. CRD, RBAC etc.
 manifests: buildutils
-	controller-gen all
+	controller-gen \
+		paths=./pkg/apis/... \
+		object:headerFile=./hack/boilerplate.go.txt
 	kustomize build config -o deploy/crds.yaml
 
 lint:

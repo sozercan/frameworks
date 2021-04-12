@@ -16,7 +16,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -44,7 +44,7 @@ type Names struct {
 }
 
 type Validation struct {
-	OpenAPIV3Schema *apiextensionsv1beta1.JSONSchemaProps `json:"openAPIV3Schema,omitempty"`
+	OpenAPIV3Schema *apiextensionsv1.JSONSchemaProps `json:"openAPIV3Schema,omitempty"`
 }
 
 type Target struct {
@@ -64,15 +64,15 @@ type CreateCRDError struct {
 // an individual controller
 type ByPodStatus struct {
 	// a unique identifier for the pod that wrote the status
-	ID                 string            `json:"id,omitempty"`
-	ObservedGeneration int64             `json:"observedGeneration,omitempty"`
-	Errors             []*CreateCRDError `json:"errors,omitempty"`
+	ID                 string           `json:"id,omitempty"`
+	ObservedGeneration int64            `json:"observedGeneration,omitempty"`
+	Errors             []CreateCRDError `json:"errors,omitempty"`
 }
 
 // ConstraintTemplateStatus defines the observed state of ConstraintTemplate
 type ConstraintTemplateStatus struct {
-	Created bool           `json:"created,omitempty"`
-	ByPod   []*ByPodStatus `json:"byPod,omitempty"`
+	Created bool          `json:"created,omitempty"`
+	ByPod   []ByPodStatus `json:"byPod,omitempty"`
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 }
