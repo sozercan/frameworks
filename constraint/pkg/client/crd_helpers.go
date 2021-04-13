@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/open-policy-agent/frameworks/constraint/pkg/apis/templates/v1alpha1"
 	"github.com/open-policy-agent/frameworks/constraint/pkg/apis/templates/v1beta1"
 	"github.com/open-policy-agent/frameworks/constraint/pkg/core/templates"
@@ -26,11 +27,11 @@ var supportedVersions = map[string]bool{
 // validateTargets ensures that the targets field has the appropriate values
 func validateTargets(templ *templates.ConstraintTemplate) error {
 	if len(templ.Spec.Targets) > 1 {
-		return errors.New("Multi-target templates are not currently supported")
+		return errors.New("multi-target templates are not currently supported")
 	} else if templ.Spec.Targets == nil {
-		return errors.New(`Field "targets" not specified in ConstraintTemplate spec`)
+		return errors.New(`field "targets" not specified in ConstraintTemplate spec`)
 	} else if len(templ.Spec.Targets) == 0 {
-		return errors.New("No targets specified. ConstraintTemplate must specify one target")
+		return errors.New("no targets specified. ConstraintTemplate must specify one target")
 	}
 	return nil
 }
@@ -42,22 +43,27 @@ func (h *crdHelper) createSchema(templ *templates.ConstraintTemplate, target Mat
 		"match":             target.MatchSchema(),
 		"enforcementAction": {Type: "string"},
 	}
+	//spew.Dump(props["match"])
 	if templ.Spec.CRD.Spec.Validation != nil && templ.Spec.CRD.Spec.Validation.OpenAPIV3Schema != nil {
 		internalSchema := *templ.Spec.CRD.Spec.Validation.OpenAPIV3Schema.DeepCopy()
 		props["parameters"] = internalSchema
 	}
 	schema := &apiextensions.JSONSchemaProps{
+		XPreserveUnknownFields: to.BoolPtr(true),
+		Type:                   "object",
 		Properties: map[string]apiextensions.JSONSchemaProps{
 			"metadata": {
 				Properties: map[string]apiextensions.JSONSchemaProps{
 					"name": {
-						Type:      "string",
 						MaxLength: func(i int64) *int64 { return &i }(63),
+						Type:      "string",
 					},
 				},
+				Type: "object",
 			},
 			"spec": {
 				Properties: props,
+				Type:       "object",
 			},
 		},
 	}
@@ -160,16 +166,16 @@ func (h *crdHelper) validateCR(cr *unstructured.Unstructured, crd *apiextensions
 		return err.ToAggregate()
 	}
 	if errs := apivalidation.IsDNS1123Subdomain(cr.GetName()); len(errs) != 0 {
-		return fmt.Errorf("Invalid Name: %s", strings.Join(errs, "\n"))
+		return fmt.Errorf("invalid Name: %s", strings.Join(errs, "\n"))
 	}
 	if cr.GetKind() != crd.Spec.Names.Kind {
-		return fmt.Errorf("Wrong kind for constraint %s. Have %s, want %s", cr.GetName(), cr.GetKind(), crd.Spec.Names.Kind)
+		return fmt.Errorf("wrong kind for constraint %s. Have %s, want %s", cr.GetName(), cr.GetKind(), crd.Spec.Names.Kind)
 	}
 	if cr.GroupVersionKind().Group != constraintGroup {
-		return fmt.Errorf("Wrong group for constraint %s. Have %s, want %s", cr.GetName(), cr.GroupVersionKind().Group, constraintGroup)
+		return fmt.Errorf("wrong group for constraint %s. Have %s, want %s", cr.GetName(), cr.GroupVersionKind().Group, constraintGroup)
 	}
 	if !supportedVersions[cr.GroupVersionKind().Version] {
-		return fmt.Errorf("Wrong version for constraint %s. Have %s, supported: %v", cr.GetName(), cr.GroupVersionKind().Version, supportedVersions)
+		return fmt.Errorf("wrong version for constraint %s. Have %s, supported: %v", cr.GetName(), cr.GroupVersionKind().Version, supportedVersions)
 	}
 	return nil
 }
