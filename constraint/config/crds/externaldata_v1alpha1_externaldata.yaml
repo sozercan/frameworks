@@ -31,11 +31,13 @@ spec:
             failurePolicy:
               type: string
             maxRetry:
-              type: string
+              format: int64
+              type: integer
             proxyURL:
               type: string
             timeout:
-              type: string
+              format: int64
+              type: integer
           type: object
   version: v1alpha1
 status:

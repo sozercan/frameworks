@@ -26,8 +26,8 @@ import (
 type ExternalDataSpec struct {
 	ProxyURL      string `json:"proxyURL,omitempty"`
 	FailurePolicy string `json:"failurePolicy,omitempty"`
-	Timeout       string `json:"timeout,omitempty"`
-	MaxRetry      string `json:"maxRetry,omitempty"`
+	Timeout       int `json:"timeout,omitempty"`
+	MaxRetry      int `json:"maxRetry,omitempty"`
 }
 
 // +genclient
