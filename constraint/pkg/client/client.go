@@ -243,7 +243,7 @@ func (c *Client) createBasicTemplateArtifacts(templ *templates.ConstraintTemplat
 		return nil, err
 	}
 	if templ.ObjectMeta.Name != strings.ToLower(templ.Spec.CRD.Spec.Names.Kind) {
-		return nil, fmt.Errorf("Template's name %s is not equal to the lowercase of CRD's Kind: %s", templ.ObjectMeta.Name, strings.ToLower(templ.Spec.CRD.Spec.Names.Kind))
+		return nil, fmt.Errorf("template's name %s is not equal to the lowercase of CRD's Kind: %s", templ.ObjectMeta.Name, strings.ToLower(templ.Spec.CRD.Spec.Names.Kind))
 	}
 
 	targetSpec, targetHandler, err := c.validateTargets(templ)
@@ -312,7 +312,7 @@ func (c *Client) createTemplateArtifacts(templ *templates.ConstraintTemplate) (*
 	req := map[string]struct{}{"violation": {}}
 
 	if err := requireRulesModule(entryPoint, req); err != nil {
-		return nil, fmt.Errorf("Invalid rego: %s", err)
+		return nil, fmt.Errorf("invalid rego: %s", err)
 	}
 
 	rr.AddEntryPointModule(artifacts.namePrefix, entryPoint)

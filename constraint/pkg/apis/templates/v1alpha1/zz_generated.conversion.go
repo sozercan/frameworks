@@ -23,7 +23,7 @@ import (
 
 	templates "github.com/open-policy-agent/frameworks/constraint/pkg/core/templates"
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
-	v1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	conversion "k8s.io/apimachinery/pkg/conversion"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
@@ -434,7 +434,7 @@ func autoConvert_v1alpha1_Validation_To_templates_Validation(in *Validation, out
 	if in.OpenAPIV3Schema != nil {
 		in, out := &in.OpenAPIV3Schema, &out.OpenAPIV3Schema
 		*out = new(apiextensions.JSONSchemaProps)
-		// FIXME: Provide conversion function to convert v1beta1.JSONSchemaProps to apiextensions.JSONSchemaProps
+		// FIXME: Provide conversion function to convert v1.JSONSchemaProps to apiextensions.JSONSchemaProps
 		compileErrorOnMissingConversion()
 	} else {
 		out.OpenAPIV3Schema = nil
@@ -450,8 +450,8 @@ func Convert_v1alpha1_Validation_To_templates_Validation(in *Validation, out *te
 func autoConvert_templates_Validation_To_v1alpha1_Validation(in *templates.Validation, out *Validation, s conversion.Scope) error {
 	if in.OpenAPIV3Schema != nil {
 		in, out := &in.OpenAPIV3Schema, &out.OpenAPIV3Schema
-		*out = new(v1beta1.JSONSchemaProps)
-		// FIXME: Provide conversion function to convert apiextensions.JSONSchemaProps to v1beta1.JSONSchemaProps
+		*out = new(v1.JSONSchemaProps)
+		// FIXME: Provide conversion function to convert apiextensions.JSONSchemaProps to v1.JSONSchemaProps
 		compileErrorOnMissingConversion()
 	} else {
 		out.OpenAPIV3Schema = nil

@@ -18,8 +18,11 @@ package v1beta1
 import (
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
+
+	goruntime "runtime"
 
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -31,8 +34,15 @@ var cfg *rest.Config
 var c client.Client
 
 func TestMain(m *testing.M) {
+	_, filename, _, _ := goruntime.Caller(0) //nolint
+	root := path.Join(path.Dir(filename), "..", "..", "..", "..")
+
+	crdPaths := []string{
+		filepath.Join(root, "config", "crd", "bases"),
+	}
+
 	t := &envtest.Environment{
-		CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "..", "deploy")},
+		CRDDirectoryPaths: crdPaths,
 	}
 
 	err := SchemeBuilder.AddToScheme(scheme.Scheme)

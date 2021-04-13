@@ -29,9 +29,13 @@ install: manifests
 	kubectl apply -f config/crds
 
 # Generate manifests e.g. CRD, RBAC etc.
-manifests:
-	controller-gen paths=./...
-	kustomize build config -o deploy/crds.yaml
+manifests: controller-gen
+	$(CONTROLLER_GEN) \
+		crd \
+		rbac:roleName=manager-role webhook \
+		paths="./..." \
+		output:crd:artifacts:config=config/crd/bases \
+		object:headerFile=./hack/boilerplate.go.txt
 
 lint:
 	golangci-lint -v run ./... --timeout 5m
@@ -39,3 +43,20 @@ lint:
 # Generate code
 generate:
 	./hack/generate.sh
+
+# find or download controller-gen
+# download controller-gen if necessary
+controller-gen:
+ifeq (, $(shell which controller-gen))
+	@{ \
+	set -e ;\
+	CONTROLLER_GEN_TMP_DIR=$$(mktemp -d) ;\
+	cd $$CONTROLLER_GEN_TMP_DIR ;\
+	go mod init tmp ;\
+	go get sigs.k8s.io/controller-tools/cmd/controller-gen@v0.5.0 ;\
+	rm -rf $$CONTROLLER_GEN_TMP_DIR ;\
+	}
+CONTROLLER_GEN=$(GOBIN)/controller-gen
+else
+CONTROLLER_GEN=$(shell which controller-gen)
+endif

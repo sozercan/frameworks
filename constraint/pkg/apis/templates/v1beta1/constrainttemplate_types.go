@@ -16,7 +16,7 @@ limitations under the License.
 package v1beta1
 
 import (
-	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -34,8 +34,7 @@ type CRD struct {
 }
 
 type CRDSpec struct {
-	Names Names `json:"names,omitempty"`
-	// +kubebuilder:validation:Schemaless
+	Names      Names       `json:"names,omitempty"`
 	Validation *Validation `json:"validation,omitempty"`
 }
 
@@ -45,7 +44,9 @@ type Names struct {
 }
 
 type Validation struct {
-	OpenAPIV3Schema *apiextensionsv1beta1.JSONSchemaProps `json:"openAPIV3Schema,omitempty"`
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:XPreserveUnknownFields
+	OpenAPIV3Schema *apiextensionsv1.JSONSchemaProps `json:"openAPIV3Schema,omitempty"`
 }
 
 type Target struct {
@@ -78,8 +79,8 @@ type ConstraintTemplateStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 }
 
-//+genclient
-//+genclient:nonNamespaced
+// +genclient
+// +genclient:nonNamespaced
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +k8s:openapi-gen=true
 // +kubebuilder:storageversion

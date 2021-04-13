@@ -1,6 +1,6 @@
 module github.com/open-policy-agent/frameworks/constraint
 
-go 1.13
+go 1.16
 
 require (
 	github.com/OneOfOne/xxhash v1.2.8 // indirect
@@ -19,6 +19,6 @@ require (
 	k8s.io/apimachinery v0.20.2
 	k8s.io/client-go v0.20.2
 	k8s.io/code-generator v0.20.2
-	sigs.k8s.io/controller-runtime v0.8.1
-	sigs.k8s.io/controller-tools v0.4.2-0.20210129215148-557da250b856
+	sigs.k8s.io/controller-runtime v0.8.3
+	sigs.k8s.io/controller-tools v0.5.0
 )

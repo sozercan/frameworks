@@ -45,7 +45,11 @@ spec:
                               type: string
                             type: array
                         type: object
-                      validation: {}
+                      validation:
+                        properties:
+                          openAPIV3Schema:
+                            x-kubernetes-preserve-unknown-fields: true
+                        type: object
                     type: object
                 type: object
               targets:
@@ -127,7 +131,11 @@ spec:
                               type: string
                             type: array
                         type: object
-                      validation: {}
+                      validation:
+                        properties:
+                          openAPIV3Schema:
+                            x-kubernetes-preserve-unknown-fields: true
+                        type: object
                     type: object
                 type: object
               targets:

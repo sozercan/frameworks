@@ -49,6 +49,8 @@ type Names struct {
 }
 
 type Validation struct {
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:XPreserveUnknownFields
 	OpenAPIV3Schema *apiextensions.JSONSchemaProps `json:"openAPIV3Schema,omitempty"`
 }
 
