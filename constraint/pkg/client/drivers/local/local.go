@@ -79,7 +79,8 @@ func New(args ...Arg) drivers.Driver {
 	for _, arg := range args {
 		arg(d)
 	}
-	d.compiler.WithCapabilities(d.capabilities)
+	/// TODO(ritazh): this is overriding the custom builtin somehow
+	//d.compiler.WithCapabilities(d.capabilities)
 	return d
 }
 
@@ -241,7 +242,9 @@ func (d *driver) alterModules(ctx context.Context, insert insertParam, remove []
 		}
 	}
 
-	c := ast.NewCompiler().WithPathConflictsCheck(storage.NonEmpty(ctx, d.storage, txn)).WithCapabilities(d.capabilities)
+	c := ast.NewCompiler().WithPathConflictsCheck(storage.NonEmpty(ctx, d.storage, txn))
+	/// TODO(ritazh): this is overriding the custom builtin somehow
+	//.WithCapabilities(d.capabilities)
 	if c.Compile(updatedModules); c.Failed() {
 		d.storage.Abort(ctx, txn)
 		return 0, c.Errors
