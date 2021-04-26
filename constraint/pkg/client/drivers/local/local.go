@@ -69,12 +69,13 @@ func DisableBuiltins(builtins ...string) Arg {
 	}
 }
 
-func New(args ...Arg) drivers.Driver {
+func New(providerCache *externaldata.ProviderCache, args ...Arg, ) drivers.Driver {
 	d := &driver{
-		compiler:     ast.NewCompiler(),
-		modules:      make(map[string]*ast.Module),
-		storage:      inmem.New(),
-		capabilities: ast.CapabilitiesForThisVersion(),
+		compiler:      ast.NewCompiler(),
+		modules:       make(map[string]*ast.Module),
+		storage:       inmem.New(),
+		capabilities:  ast.CapabilitiesForThisVersion(),
+		providerCache: providerCache,
 	}
 	for _, arg := range args {
 		arg(d)
@@ -93,7 +94,7 @@ type driver struct {
 	storage       storage.Store
 	capabilities  *ast.Capabilities
 	traceEnabled  bool
-	providerCache externaldata.ProviderCache
+	providerCache *externaldata.ProviderCache
 }
 
 func (d *driver) Init(ctx context.Context) error {
