@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
+	externaldatav1alpha1 "github.com/open-policy-agent/frameworks/constraint/pkg/apis/externaldata/v1alpha1"
 	"github.com/open-policy-agent/frameworks/constraint/pkg/client/drivers"
 	"github.com/open-policy-agent/frameworks/constraint/pkg/types"
 	"github.com/open-policy-agent/opa/ast"
@@ -18,7 +21,6 @@ import (
 	"github.com/open-policy-agent/opa/topdown"
 	"github.com/pkg/errors"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 const moduleSetPrefix = "__modset_"
@@ -74,7 +76,7 @@ func New(args ...Arg) drivers.Driver {
 		modules:  make(map[string]*ast.Module),
 		storage:  inmem.New(),
 		capabilities: ast.CapabilitiesForThisVersion(),
-		externalDataSources: make(map[string]*unstructured.Unstructured),
+		externalDataSources: make(map[string]*externaldatav1alpha1.Provider),
 	}
 	for _, arg := range args {
 		arg(d)
@@ -93,7 +95,7 @@ type driver struct {
 	storage      storage.Store
 	capabilities *ast.Capabilities
 	traceEnabled bool
-	externalDataSources  map[string]*unstructured.Unstructured
+	externalDataSources  map[string]*externaldatav1alpha1.Provider
 }
 
 func (d *driver) Init(ctx context.Context) error {
@@ -104,7 +106,7 @@ func (d *driver) Init(ctx context.Context) error {
 			Memoize: true,
 		},
 		func(bctx rego.BuiltinContext, a, b *ast.Term) (*ast.Term, error) {
-			var ed, input, result string
+			var ed, input string
 
 			if err := ast.As(a.Value, &ed); err != nil {
 				return nil, err
@@ -113,15 +115,37 @@ func (d *driver) Init(ctx context.Context) error {
 				return nil, err
 			}
 
-			result = fmt.Sprintf("input: %v, external datasource len: %v", input, len(d.externalDataSources))
+			//result = fmt.Sprintf("input: %v, external datasource len: %v", input, len(d.externalDataSources))
 
-			if data, ok := d.externalDataSources[ed]; !ok {
-				result = fmt.Sprintf("external datasource %v not found", ed)
-			} else {
-				result = fmt.Sprintf("%s | %s ", result, data.GetKind())
+			data, ok := d.externalDataSources[ed]; 
+			if !ok {
+				return nil, fmt.Errorf("external datasource %v not found", ed)
 			}
 
-			return ast.StringTerm(input), nil
+			req, err := http.NewRequest("GET", fmt.Sprintf(data.Spec.ProxyURL, url.QueryEscape(input)), nil)
+			if err != nil {
+				return nil, err
+			}
+
+			resp, err := http.DefaultClient.Do(req.WithContext(bctx.Context))
+			if err != nil {
+				return nil, err
+			}
+
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				return nil, fmt.Errorf(resp.Status)
+			}
+
+			v, err := ast.ValueFromReader(resp.Body)
+			if err != nil {
+				return nil, err
+			}
+
+			return ast.NewTerm(v), nil
+
+			//return ast.StringTerm(result), nil
 		},
 	)
 	return nil
@@ -295,7 +319,7 @@ func parsePath(path string) ([]string, error) {
 	}
 	return p, nil
 }
-func (d *driver) AddExternalData(ctx context.Context, key string, data *unstructured.Unstructured) error {
+func (d *driver) AddExternalData(ctx context.Context, key string, data *externaldatav1alpha1.Provider) error {
 	d.modulesMux.RLock()
 	defer d.modulesMux.RUnlock()
 

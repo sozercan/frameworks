@@ -11,6 +11,8 @@ import (
 
 	"github.com/open-policy-agent/frameworks/constraint/pkg/client/drivers"
 	"github.com/open-policy-agent/frameworks/constraint/pkg/client/regolib"
+
+	externaldatav1alpha1 "github.com/open-policy-agent/frameworks/constraint/pkg/apis/externaldata/v1alpha1"
 	constraintlib "github.com/open-policy-agent/frameworks/constraint/pkg/core/constraints"
 	"github.com/open-policy-agent/frameworks/constraint/pkg/core/templates"
 	"github.com/open-policy-agent/frameworks/constraint/pkg/regorewriter"
@@ -71,6 +73,7 @@ type Client struct {
 	backend           *Backend
 	targets           map[string]TargetHandler
 	constraintsMux    sync.RWMutex
+	externalDataMux   sync.RWMutex
 	templates         map[templateKey]*templateEntry
 	constraints       map[schema.GroupKind]map[string]*unstructured.Unstructured
 	allowedDataFields []string
@@ -664,9 +667,9 @@ func (c *Client) ValidateConstraint(ctx context.Context, constraint *unstructure
 }
 
 // AddExternalData validates the crd and, if valid, inserts it into cache.
-func (c *Client) AddExternalData(ctx context.Context, externalData *unstructured.Unstructured) error {
-	c.constraintsMux.RLock()
-	defer c.constraintsMux.RUnlock()
+func (c *Client) AddExternalData(ctx context.Context, externalData *externaldatav1alpha1.Provider) error {
+	c.externalDataMux.RLock()
+	defer c.externalDataMux.RUnlock()
 	err := c.backend.driver.AddExternalData(ctx, externalData.GetName(), externalData)
 	if err != nil {
 		return err

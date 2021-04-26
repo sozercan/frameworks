@@ -5,7 +5,8 @@ import (
 
 	"github.com/open-policy-agent/frameworks/constraint/pkg/types"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	externaldatav1alpha1 "github.com/open-policy-agent/frameworks/constraint/pkg/apis/externaldata/v1alpha1"
+
 )
 
 type QueryCfg struct {
@@ -35,7 +36,7 @@ type Driver interface {
 	PutData(ctx context.Context, path string, data interface{}) error
 	DeleteData(ctx context.Context, path string) (bool, error)
 
-	AddExternalData(ctx context.Context, key string, data *unstructured.Unstructured) error
+	AddExternalData(ctx context.Context, key string, data *externaldatav1alpha1.Provider) error
 
 	Query(ctx context.Context, path string, input interface{}, opts ...QueryOpt) (*types.Response, error)
 
