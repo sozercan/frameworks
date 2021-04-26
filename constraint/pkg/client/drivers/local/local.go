@@ -15,12 +15,11 @@ import (
 	"github.com/open-policy-agent/frameworks/constraint/pkg/types"
 	"github.com/open-policy-agent/opa/ast"
 	"github.com/open-policy-agent/opa/rego"
-	opatypes "github.com/open-policy-agent/opa/types"
 	"github.com/open-policy-agent/opa/storage"
 	"github.com/open-policy-agent/opa/storage/inmem"
 	"github.com/open-policy-agent/opa/topdown"
+	opatypes "github.com/open-policy-agent/opa/types"
 	"github.com/pkg/errors"
-
 )
 
 const moduleSetPrefix = "__modset_"
@@ -117,7 +116,7 @@ func (d *driver) Init(ctx context.Context) error {
 
 			//result = fmt.Sprintf("input: %v, external datasource len: %v", input, len(d.externalDataSources))
 
-			data, ok := d.externalDataSources[ed]; 
+			data, ok := d.externalDataSources[ed];
 			if !ok {
 				return nil, fmt.Errorf("external datasource %v not found", ed)
 			}
@@ -318,13 +317,6 @@ func parsePath(path string) ([]string, error) {
 		return nil, fmt.Errorf("Bad data path: %s", path)
 	}
 	return p, nil
-}
-func (d *driver) AddExternalData(ctx context.Context, key string, data *externaldatav1alpha1.Provider) error {
-	d.modulesMux.RLock()
-	defer d.modulesMux.RUnlock()
-
-	d.externalDataSources[key] = data
-	return nil
 }
 
 func (d *driver) PutData(ctx context.Context, path string, data interface{}) error {
