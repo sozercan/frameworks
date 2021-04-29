@@ -6,11 +6,15 @@ package ast
 
 import (
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/open-policy-agent/opa/internal/debug"
+	"github.com/open-policy-agent/opa/internal/gojsonschema"
 	"github.com/open-policy-agent/opa/metrics"
+	"github.com/open-policy-agent/opa/types"
 	"github.com/open-policy-agent/opa/util"
 )
 
@@ -101,6 +105,9 @@ type Compiler struct {
 	unsafeBuiltinsMap    map[string]struct{}           // user-supplied set of unsafe built-ins functions to block (deprecated: use capabilities)
 	comprehensionIndices map[*Term]*ComprehensionIndex // comprehension key index
 	initialized          bool                          // indicates if init() has been called
+	debug                debug.Debug                   // emits debug information produced during compilation
+	schemaSet            *SchemaSet                    // user-supplied schemas for input and data documents
+	inputType            types.Type                    // global input type retrieved from schema set
 }
 
 // CompilerStage defines the interface for stages in the compiler.
@@ -214,7 +221,6 @@ func NewCompiler() *Compiler {
 
 	c := &Compiler{
 		Modules:       map[string]*Module{},
-		TypeEnv:       NewTypeEnv(),
 		RewrittenVars: map[Var]Var{},
 		ruleIndices: util.NewHashMap(func(a, b util.T) bool {
 			r1, r2 := a.(Ref), b.(Ref)
@@ -226,6 +232,7 @@ func NewCompiler() *Compiler {
 		after:                map[string][]CompilerStageDefinition{},
 		unsafeBuiltinsMap:    map[string]struct{}{},
 		comprehensionIndices: map[*Term]*ComprehensionIndex{},
+		debug:                debug.Discard(),
 	}
 
 	c.ModuleTree = NewModuleTree(nil)
@@ -308,6 +315,15 @@ func (c *Compiler) WithCapabilities(capabilities *Capabilities) *Compiler {
 	return c
 }
 
+// WithDebug sets where debug messages are written to. Passing `nil` has no
+// effect.
+func (c *Compiler) WithDebug(sink io.Writer) *Compiler {
+	if sink != nil {
+		c.debug = debug.New(sink)
+	}
+	return c
+}
+
 // WithBuiltins is deprecated. Use WithCapabilities instead.
 func (c *Compiler) WithBuiltins(builtins map[string]*Builtin) *Compiler {
 	c.customBuiltins = make(map[string]*Builtin)
@@ -349,6 +365,12 @@ func (c *Compiler) Compile(modules map[string]*Module) {
 	sort.Strings(c.sorted)
 
 	c.compile()
+}
+
+// WithSchemas sets a schemaSet to the compiler
+func (c *Compiler) WithSchemas(schemas *SchemaSet) *Compiler {
+	c.schemaSet = schemas
+	return c
 }
 
 // Failed returns true if a compilation error has been encountered.
@@ -606,6 +628,14 @@ func (c *Compiler) RuleIndex(path Ref) RuleIndex {
 	return r.(RuleIndex)
 }
 
+// PassesTypeCheck determines whether the given body passes type checking
+func (c *Compiler) PassesTypeCheck(body Body) bool {
+	checker := newTypeChecker().WithSchemaSet(c.schemaSet).WithInputType(c.inputType)
+	env := c.TypeEnv
+	_, errs := checker.CheckBody(env, body)
+	return len(errs) == 0
+}
+
 // ModuleLoader defines the interface that callers can implement to enable lazy
 // loading of modules during compilation.
 type ModuleLoader func(resolved map[string]*Module) (parsed map[string]*Module, err error)
@@ -652,7 +682,7 @@ func (c *Compiler) buildComprehensionIndices() {
 		WalkRules(c.Modules[name], func(r *Rule) bool {
 			candidates := r.Head.Args.Vars()
 			candidates.Update(ReservedVars)
-			n := buildComprehensionIndices(c.GetArity, candidates, r.Body, c.comprehensionIndices)
+			n := buildComprehensionIndices(c.debug, c.GetArity, candidates, c.RewrittenVars, r.Body, c.comprehensionIndices)
 			c.counterAdd(compileStageComprehensionIndexBuild, n)
 			return false
 		})
@@ -836,12 +866,85 @@ func (c *Compiler) checkSafetyRuleHeads() {
 	}
 }
 
+func compileSchema(goSchema interface{}) (*gojsonschema.Schema, error) {
+	var refLoader gojsonschema.JSONLoader
+	sl := gojsonschema.NewSchemaLoader()
+
+	if goSchema != nil {
+		refLoader = gojsonschema.NewGoLoader(goSchema)
+	} else {
+		return nil, fmt.Errorf("no schema as input to compile")
+	}
+	schemasCompiled, err := sl.Compile(refLoader)
+	if err != nil {
+		return nil, fmt.Errorf("unable to compile the schema due to: %w", err)
+	}
+	return schemasCompiled, nil
+}
+
+func parseSchema(schema interface{}) (types.Type, error) {
+	subSchema, ok := schema.(*gojsonschema.SubSchema)
+	if !ok {
+		return nil, fmt.Errorf("unexpected schema type %v", subSchema)
+	}
+
+	// Handle referenced schemas, returns directly when a $ref is found
+	if subSchema.RefSchema != nil {
+		return parseSchema(subSchema.RefSchema)
+	}
+
+	if subSchema.Types.IsTyped() {
+		if subSchema.Types.Contains("boolean") {
+			return types.B, nil
+
+		} else if subSchema.Types.Contains("string") {
+			return types.S, nil
+
+		} else if subSchema.Types.Contains("integer") || subSchema.Types.Contains("number") {
+			return types.N, nil
+
+		} else if subSchema.Types.Contains("object") {
+			if subSchema.PropertiesChildren != nil && len(subSchema.PropertiesChildren) > 0 {
+				staticProps := make([]*types.StaticProperty, 0, len(subSchema.PropertiesChildren))
+				for _, pSchema := range subSchema.PropertiesChildren {
+					newtype, err := parseSchema(pSchema)
+					if err != nil {
+						return nil, fmt.Errorf("unexpected schema type %v: %w", pSchema, err)
+					}
+					staticProps = append(staticProps, types.NewStaticProperty(pSchema.Property, newtype))
+				}
+				return types.NewObject(staticProps, nil), nil
+			}
+			return types.NewObject(nil, types.NewDynamicProperty(types.A, types.A)), nil
+
+		} else if subSchema.Types.Contains("array") {
+			if subSchema.ItemsChildren != nil && len(subSchema.ItemsChildren) > 0 {
+				newTypes := make([]types.Type, 0, len(subSchema.ItemsChildren))
+				for i := 0; i != len(subSchema.ItemsChildren); i++ {
+					iSchema := subSchema.ItemsChildren[i]
+					newtype, err := parseSchema(iSchema)
+					if err != nil {
+						return nil, fmt.Errorf("unexpected schema type %v", iSchema)
+					}
+					newTypes = append(newTypes, newtype)
+				}
+				return types.NewArray(newTypes, nil), nil
+			}
+			return types.NewArray(nil, types.A), nil
+		}
+	}
+	return types.A, nil
+}
+
 // checkTypes runs the type checker on all rules. The type checker builds a
 // TypeEnv that is stored on the compiler.
 func (c *Compiler) checkTypes() {
 	// Recursion is caught in earlier step, so this cannot fail.
 	sorted, _ := c.Graph.Sort()
-	checker := newTypeChecker().WithVarRewriter(rewriteVarsInRef(c.RewrittenVars))
+	checker := newTypeChecker().
+		WithSchemaSet(c.schemaSet).
+		WithInputType(c.inputType).
+		WithVarRewriter(rewriteVarsInRef(c.RewrittenVars))
 	env, errs := checker.CheckTypes(c.TypeEnv, sorted)
 	for _, err := range errs {
 		c.err(err)
@@ -916,8 +1019,23 @@ func (c *Compiler) init() {
 		c.builtins[name] = bi
 	}
 
-	tc := newTypeChecker()
-	c.TypeEnv = tc.checkLanguageBuiltins(nil, c.builtins)
+	// Load the global input schema if one was provided.
+	if c.schemaSet != nil {
+		if schema := c.schemaSet.Get(InputRootRef); schema != nil {
+			tpe, err := loadSchema(schema)
+			if err != nil {
+				c.err(NewError(TypeErr, nil, err.Error()))
+			} else {
+				c.inputType = tpe
+			}
+		}
+	}
+
+	c.TypeEnv = newTypeChecker().
+		WithSchemaSet(c.schemaSet).
+		WithInputType(c.inputType).
+		Env(c.builtins)
+
 	c.initialized = true
 }
 
@@ -1454,15 +1572,23 @@ func (qc *queryCompiler) resolveRefs(qctx *QueryContext, body Body) (Body, error
 
 	var globals map[Var]Ref
 
-	if qctx != nil && qctx.Package != nil {
-		var ruleExports []Var
-		rules := qc.compiler.getExports()
-		if exist, ok := rules.Get(qctx.Package.Path); ok {
-			ruleExports = exist.([]Var)
+	if qctx != nil {
+		pkg := qctx.Package
+		// Query compiler ought to generate a package if one was not provided and one or more imports were provided.
+		// The generated package name could even be an empty string to avoid conflicts (it doesn't have to be valid syntactically)
+		if pkg == nil && len(qctx.Imports) > 0 {
+			pkg = &Package{Path: RefTerm(VarTerm("")).Value.(Ref)}
 		}
+		if pkg != nil {
+			var ruleExports []Var
+			rules := qc.compiler.getExports()
+			if exist, ok := rules.Get(pkg.Path); ok {
+				ruleExports = exist.([]Var)
+			}
 
-		globals = getGlobals(qctx.Package, ruleExports, qc.qctx.Imports)
-		qctx.Imports = nil
+			globals = getGlobals(qctx.Package, ruleExports, qctx.Imports)
+			qctx.Imports = nil
+		}
 	}
 
 	ignore := &declaredVarStack{declaredVars(body)}
@@ -1526,11 +1652,15 @@ func (qc *queryCompiler) checkSafety(_ *QueryContext, body Body) (Body, error) {
 
 func (qc *queryCompiler) checkTypes(qctx *QueryContext, body Body) (Body, error) {
 	var errs Errors
-	checker := newTypeChecker().WithVarRewriter(rewriteVarsInRef(qc.rewritten, qc.compiler.RewrittenVars))
+	checker := newTypeChecker().
+		WithSchemaSet(qc.compiler.schemaSet).
+		WithInputType(qc.compiler.inputType).
+		WithVarRewriter(rewriteVarsInRef(qc.rewritten, qc.compiler.RewrittenVars))
 	qc.typeEnv, errs = checker.CheckBody(qc.compiler.TypeEnv, body)
 	if len(errs) > 0 {
 		return nil, errs
 	}
+
 	return body, nil
 }
 
@@ -1560,7 +1690,7 @@ func (qc *queryCompiler) rewriteWithModifiers(qctx *QueryContext, body Body) (Bo
 func (qc *queryCompiler) buildComprehensionIndices(qctx *QueryContext, body Body) (Body, error) {
 	// NOTE(tsandall): The query compiler does not have a metrics object so we
 	// cannot record index metrics currently.
-	_ = buildComprehensionIndices(qc.compiler.GetArity, ReservedVars, body, qc.comprehensionIndices)
+	_ = buildComprehensionIndices(qc.compiler.debug, qc.compiler.GetArity, ReservedVars, qc.RewrittenVars(), body, qc.comprehensionIndices)
 	return body, nil
 }
 
@@ -1581,11 +1711,13 @@ func (ci *ComprehensionIndex) String() string {
 	return fmt.Sprintf("<keys: %v>", NewArray(ci.Keys...))
 }
 
-func buildComprehensionIndices(arity func(Ref) int, candidates VarSet, node interface{}, result map[*Term]*ComprehensionIndex) (n uint64) {
+func buildComprehensionIndices(dbg debug.Debug, arity func(Ref) int, candidates VarSet, rwVars map[Var]Var, node interface{}, result map[*Term]*ComprehensionIndex) uint64 {
+	var n uint64
 	WalkBodies(node, func(b Body) bool {
 		cpy := candidates.Copy()
 		for _, expr := range b {
-			if index := getComprehensionIndex(arity, cpy, expr); index != nil {
+			index := getComprehensionIndex(dbg, arity, cpy, rwVars, expr)
+			if index != nil {
 				result[index.Term] = index
 				n++
 			}
@@ -1598,11 +1730,13 @@ func buildComprehensionIndices(arity func(Ref) int, candidates VarSet, node inte
 	return n
 }
 
-func getComprehensionIndex(arity func(Ref) int, candidates VarSet, expr *Expr) *ComprehensionIndex {
+func getComprehensionIndex(dbg debug.Debug, arity func(Ref) int, candidates VarSet, rwVars map[Var]Var, expr *Expr) *ComprehensionIndex {
 
 	// Ignore everything except <var> = <comprehension> expressions. Extract
 	// the comprehension term from the expression.
 	if !expr.IsEquality() || expr.Negated || len(expr.With) > 0 {
+		// No debug message, these are assumed to be known hinderances
+		// to comprehension indexing.
 		return nil
 	}
 
@@ -1617,6 +1751,7 @@ func getComprehensionIndex(arity func(Ref) int, candidates VarSet, expr *Expr) *
 	}
 
 	if term == nil {
+		// no debug for this, it's the ordinary "nothing to do here" case
 		return nil
 	}
 
@@ -1653,6 +1788,7 @@ func getComprehensionIndex(arity func(Ref) int, candidates VarSet, expr *Expr) *
 	unsafe := body.Vars(SafetyCheckVisitorParams).Diff(outputs).Diff(ReservedVars)
 
 	if len(unsafe) > 0 {
+		dbg.Printf("%s: unsafe vars: %v", expr.Location, unsafe)
 		return nil
 	}
 
@@ -1662,6 +1798,7 @@ func getComprehensionIndex(arity func(Ref) int, candidates VarSet, expr *Expr) *
 	regressionVis := newComprehensionIndexRegressionCheckVisitor(candidates)
 	regressionVis.Walk(body)
 	if regressionVis.worse {
+		dbg.Printf("%s: output vars intersect candidates", expr.Location)
 		return nil
 	}
 
@@ -1671,6 +1808,7 @@ func getComprehensionIndex(arity func(Ref) int, candidates VarSet, expr *Expr) *
 	nestedVis := newComprehensionIndexNestedCandidateVisitor(candidates)
 	nestedVis.Walk(body)
 	if nestedVis.found {
+		dbg.Printf("%s: nested comprehensions close over candidates", expr.Location)
 		return nil
 	}
 
@@ -1680,6 +1818,7 @@ func getComprehensionIndex(arity func(Ref) int, candidates VarSet, expr *Expr) *
 	// empty, there is no indexing to do.
 	indexVars := candidates.Intersect(outputs)
 	if len(indexVars) == 0 {
+		dbg.Printf("%s: no index vars", expr.Location)
 		return nil
 	}
 
@@ -1693,6 +1832,15 @@ func getComprehensionIndex(arity func(Ref) int, candidates VarSet, expr *Expr) *
 		return result[i].Value.Compare(result[j].Value) < 0
 	})
 
+	debugRes := make([]*Term, len(result))
+	for i, r := range result {
+		if o, ok := rwVars[r.Value.(Var)]; ok {
+			debugRes[i] = NewTerm(o)
+		} else {
+			debugRes[i] = r
+		}
+	}
+	dbg.Printf("%s: comprehension index built with keys: %v", expr.Location, debugRes)
 	return &ComprehensionIndex{Term: term, Keys: result}
 }
 
@@ -2917,15 +3065,16 @@ func rewriteComprehensionTerms(f *equalityFactory, node interface{}) (interface{
 func rewriteEquals(x interface{}) {
 	doubleEq := Equal.Ref()
 	unifyOp := Equality.Ref()
-	WalkExprs(x, func(x *Expr) bool {
-		if x.IsCall() {
+	t := NewGenericTransformer(func(x interface{}) (interface{}, error) {
+		if x, ok := x.(*Expr); ok && x.IsCall() {
 			operator := x.Operator()
 			if operator.Equal(doubleEq) && len(x.Operands()) == 2 {
 				x.SetOperator(NewTerm(unifyOp))
 			}
 		}
-		return false
+		return x, nil
 	})
+	Transform(t, x)
 }
 
 // rewriteDynamics will rewrite the body so that dynamic terms (i.e., refs and
