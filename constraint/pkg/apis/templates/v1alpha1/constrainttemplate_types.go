@@ -44,6 +44,9 @@ type Names struct {
 }
 
 type Validation struct {
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
 	OpenAPIV3Schema *apiextensionsv1beta1.JSONSchemaProps `json:"openAPIV3Schema,omitempty"`
 }
 
@@ -62,17 +65,18 @@ type CreateCRDError struct {
 
 // ByPodStatus defines the observed state of ConstraintTemplate as seen by
 // an individual controller
+// +kubebuilder:pruning:PreserveUnknownFields
 type ByPodStatus struct {
 	// a unique identifier for the pod that wrote the status
-	ID                 string            `json:"id,omitempty"`
-	ObservedGeneration int64             `json:"observedGeneration,omitempty"`
-	Errors             []*CreateCRDError `json:"errors,omitempty"`
+	ID                 string           `json:"id,omitempty"`
+	ObservedGeneration int64            `json:"observedGeneration,omitempty"`
+	Errors             []CreateCRDError `json:"errors,omitempty"`
 }
 
 // ConstraintTemplateStatus defines the observed state of ConstraintTemplate
 type ConstraintTemplateStatus struct {
-	Created bool           `json:"created,omitempty"`
-	ByPod   []*ByPodStatus `json:"byPod,omitempty"`
+	Created bool          `json:"created,omitempty"`
+	ByPod   []ByPodStatus `json:"byPod,omitempty"`
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 }
@@ -80,9 +84,11 @@ type ConstraintTemplateStatus struct {
 // +genclient
 // +genclient:nonNamespaced
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+// +kubebuilder:subresource:status
 
 // ConstraintTemplate is the Schema for the constrainttemplates API
 // +k8s:openapi-gen=true
+// +k8s:conversion-gen-external-types=github.com/open-policy-agent/frameworks/constraint/pkg/apis/templates
 type ConstraintTemplate struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

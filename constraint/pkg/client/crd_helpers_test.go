@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/open-policy-agent/frameworks/constraint/pkg/core/templates"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -81,6 +82,11 @@ type testTargetHandler struct {
 
 func createTestTargetHandler(args ...targetHandlerArg) MatchSchemaProvider {
 	h := &testTargetHandler{}
+
+	// The default matchSchema is empty, and thus lacks type information
+	trueBool := true
+	h.matchSchema.XPreserveUnknownFields = &trueBool
+
 	for _, arg := range args {
 		arg(h)
 	}
@@ -98,9 +104,10 @@ type propMap map[string]apiextensions.JSONSchemaProps
 // prop currently expects 0 or 1 prop map. More is unsupported.
 func prop(pm ...map[string]apiextensions.JSONSchemaProps) apiextensions.JSONSchemaProps {
 	if len(pm) == 0 {
-		return apiextensions.JSONSchemaProps{}
+		trueBool := true
+		return apiextensions.JSONSchemaProps{XPreserveUnknownFields: &trueBool}
 	}
-	return apiextensions.JSONSchemaProps{Properties: pm[0]}
+	return apiextensions.JSONSchemaProps{Type: "object", Properties: pm[0]}
 }
 
 // tProp creates a typed property
@@ -110,6 +117,7 @@ func tProp(t string) apiextensions.JSONSchemaProps {
 
 func expectedSchema(pm propMap) *apiextensions.JSONSchemaProps {
 	pm["enforcementAction"] = apiextensions.JSONSchemaProps{Type: "string"}
+	trueBool := true
 	p := prop(
 		propMap{
 			"metadata": prop(propMap{
@@ -118,7 +126,8 @@ func expectedSchema(pm propMap) *apiextensions.JSONSchemaProps {
 					MaxLength: func(i int64) *int64 { return &i }(63),
 				},
 			}),
-			"spec": prop(pm),
+			"spec":   prop(pm),
+			"status": {XPreserveUnknownFields: &trueBool},
 		},
 	)
 	return &p
@@ -278,7 +287,7 @@ func TestCreateSchema(t *testing.T) {
 				t.Errorf("error = %v; want nil", err)
 			}
 			if !reflect.DeepEqual(schema, tc.ExpectedSchema) {
-				t.Errorf("createSchema(%#v) = \n%#v; \nwant %#v", tc.Template, *schema, *tc.ExpectedSchema)
+				t.Errorf("Unexpected schema output.  Diff: %v", cmp.Diff(*schema, tc.ExpectedSchema))
 			}
 		})
 	}
