@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 
@@ -105,12 +104,12 @@ func (d *driver) Init(ctx context.Context) error {
 			Memoize: true,
 		},
 		func(bctx rego.BuiltinContext, a, b *ast.Term) (*ast.Term, error) {
-			var providerName, input string
+			var providerName, body string
 
 			if err := ast.As(a.Value, &providerName); err != nil {
 				return nil, err
 			}
-			if err := ast.As(b.Value, &input); err != nil {
+			if err := ast.As(b.Value, &body); err != nil {
 				return nil, err
 			}
 
@@ -119,7 +118,7 @@ func (d *driver) Init(ctx context.Context) error {
 				return nil, fmt.Errorf("unable to retrieve provider %v cache", providerName)
 
 			}
-			req, err := http.NewRequest("GET", fmt.Sprintf(cache.Spec.ProxyURL, url.QueryEscape(input)), nil)
+			req, err := http.NewRequest("GET", cache.Spec.ProxyURL, bytes.NewBuffer([]byte(body)))
 			if err != nil {
 				return nil, err
 			}
