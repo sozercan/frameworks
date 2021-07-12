@@ -19,16 +19,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // ProviderSpec defines the desired state of Provider
 type ProviderSpec struct {
-	ProxyURL      string `json:"proxyURL,omitempty"`
-	FailurePolicy string `json:"failurePolicy,omitempty"`
-	Timeout       int `json:"timeout,omitempty"`
-	MaxRetry      int `json:"maxRetry,omitempty"`
+	ProxyURL      string     `json:"proxyURL,omitempty"`
+	FailurePolicy string     `json:"failurePolicy,omitempty"`
+	Timeout       int        `json:"timeout,omitempty"`
+	MaxRetry      int        `json:"maxRetry,omitempty"`
+	DataSource    DataSource `json:"dataSource,omitempty"`
 }
+
+type DataSource string
+
+const (
+	ValueAtLocation DataSource = "valueAtLocation"
+	Username        DataSource = "username"
+)
 
 // +genclient
 // +genclient:nonNamespaced

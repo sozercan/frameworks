@@ -68,19 +68,24 @@ func DisableBuiltins(builtins ...string) Arg {
 	}
 }
 
+func AddExternalDataProviderCache(providerCache *externaldata.ProviderCache) Arg {
+	return func(d *driver) {
+		d.providerCache = providerCache
+	}
+}
+
 func New(providerCache *externaldata.ProviderCache, args ...Arg, ) drivers.Driver {
 	d := &driver{
 		compiler:      ast.NewCompiler(),
 		modules:       make(map[string]*ast.Module),
 		storage:       inmem.New(),
 		capabilities:  ast.CapabilitiesForThisVersion(),
-		providerCache: providerCache,
 	}
 	for _, arg := range args {
 		arg(d)
 	}
-	/// TODO(ritazh): this is overriding the custom builtin somehow
-	//d.compiler.WithCapabilities(d.capabilities)
+	// TODO(ritazh): this is overriding the custom builtin somehow
+	// d.compiler.WithCapabilities(d.capabilities)
 	return d
 }
 
@@ -105,6 +110,7 @@ func (d *driver) Init(ctx context.Context) error {
 		},
 		func(bctx rego.BuiltinContext, a, b *ast.Term) (*ast.Term, error) {
 			var providerName, body string
+			// TODO(sertac): body should be a list
 
 			if err := ast.As(a.Value, &providerName); err != nil {
 				return nil, err
