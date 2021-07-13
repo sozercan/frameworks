@@ -19,21 +19,20 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ProviderSpec defines the desired state of Provider
-type ProviderSpec struct {
-	ProxyURL      string     `json:"proxyURL,omitempty"`
-	FailurePolicy string     `json:"failurePolicy,omitempty"`
-	Timeout       int        `json:"timeout,omitempty"`
-	MaxRetry      int        `json:"maxRetry,omitempty"`
-	DataSource    DataSource `json:"dataSource,omitempty"`
-}
-
-type DataSource string
+type FailurePolicy string
 
 const (
-	ValueAtLocation DataSource = "valueAtLocation"
-	Username        DataSource = "username"
+	Ignore FailurePolicy = "ignore"
+	Fail   FailurePolicy = "fail"
 )
+
+// ProviderSpec defines the desired state of Provider
+type ProviderSpec struct {
+	ProxyURL      string        `json:"proxyURL,omitempty"`
+	FailurePolicy FailurePolicy `json:"failurePolicy,omitempty"`
+	Timeout       int           `json:"timeout,omitempty"`
+	MaxRetry      int           `json:"maxRetry,omitempty"`
+}
 
 // +genclient
 // +genclient:nonNamespaced
