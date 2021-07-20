@@ -74,12 +74,12 @@ func AddExternalDataProviderCache(providerCache *externaldata.ProviderCache) Arg
 	}
 }
 
-func New(providerCache *externaldata.ProviderCache, args ...Arg, ) drivers.Driver {
+func New(args ...Arg) drivers.Driver {
 	d := &driver{
-		compiler:      ast.NewCompiler(),
-		modules:       make(map[string]*ast.Module),
-		storage:       inmem.New(),
-		capabilities:  ast.CapabilitiesForThisVersion(),
+		compiler:     ast.NewCompiler(),
+		modules:      make(map[string]*ast.Module),
+		storage:      inmem.New(),
+		capabilities: ast.CapabilitiesForThisVersion(),
 	}
 	for _, arg := range args {
 		arg(d)
@@ -315,7 +315,7 @@ func (d *driver) listModuleSet(namePrefix string) []string {
 func parsePath(path string) ([]string, error) {
 	p, ok := storage.ParsePathEscaped(path)
 	if !ok {
-		return nil, fmt.Errorf("Bad data path: %s", path)
+		return nil, fmt.Errorf("bad data path: %s", path)
 	}
 	return p, nil
 }
