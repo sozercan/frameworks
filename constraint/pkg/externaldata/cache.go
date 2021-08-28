@@ -9,8 +9,9 @@ import (
 )
 
 type ProviderCache struct {
-	cache map[string]v1alpha1.Provider
-	mux   sync.RWMutex
+	cache     map[string]v1alpha1.Provider
+	dataCache map[ProviderCacheKey]string
+	mux       sync.RWMutex
 }
 
 func NewCache() *ProviderCache {
@@ -81,4 +82,33 @@ func isValidFailurePolicy(policy string) bool {
 		return true
 	}
 	return false
+}
+
+// ProviderCacheKey is the map key for provider requests.
+type ProviderCacheKey struct {
+	ProviderName string `json:"providerName,omitempty"`
+	OutboundData string `json:"outboundData,omitempty"`
+}
+
+func (c *ProviderCache) CheckCache(key ProviderCacheKey) (string, error) {
+	c.initializeCache()
+	if v, ok := c.dataCache[key]; ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("external data cache key not found")
+}
+
+func (c *ProviderCache) initializeCache() {
+	if len(c.dataCache) == 0 {
+		// Initialize if it isn't there
+		c.dataCache = make(map[ProviderCacheKey]string)
+	}
+}
+
+func (c *ProviderCache) InsertIntoCache(key ProviderCacheKey, value string) {
+	c.initializeCache()
+	if c.dataCache == nil {
+		return
+	}
+	c.dataCache[key] = value
 }

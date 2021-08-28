@@ -118,50 +118,66 @@ func (d *driver) Init(ctx context.Context) error {
 				Decl:    opatypes.NewFunction(opatypes.Args(opatypes.S, opatypes.S), opatypes.A),
 				Memoize: true,
 			},
-			func(bctx rego.BuiltinContext, a, b *ast.Term) (*ast.Term, error) {
-				var providerName, body string
-
-				if err := ast.As(a.Value, &providerName); err != nil {
-					return nil, err
-				}
-				if err := ast.As(b.Value, &body); err != nil {
-					return nil, err
-				}
-
-				provider, err := d.providerCache.Get(providerName)
-				if err != nil {
-					return nil, fmt.Errorf("unable to retrieve provider %v from cache", providerName)
-				}
-
-				req, err := http.NewRequest("GET", provider.Spec.ProxyURL, bytes.NewBuffer([]byte(body)))
-				if err != nil {
-					return nil, err
-				}
-
-				ctx, cancel := context.WithDeadline(bctx.Context, time.Now().Add(time.Duration(provider.Spec.Timeout)*time.Second))
-				defer cancel()
-
-				resp, err := http.DefaultClient.Do(req.WithContext(ctx))
-				if err != nil {
-					return nil, err
-				}
-
-				defer resp.Body.Close()
-
-				if resp.StatusCode != http.StatusOK {
-					return nil, fmt.Errorf(resp.Status)
-				}
-
-				v, err := ast.ValueFromReader(resp.Body)
-				if err != nil {
-					return nil, err
-				}
-
-				return ast.NewTerm(v), nil
-			},
+			d.SendRequest,
 		)
 	}
 	return nil
+}
+
+func (d *driver) SendRequest(bctx rego.BuiltinContext, a, b *ast.Term) (*ast.Term, error) {
+	var providerName, body string
+
+	if err := ast.As(a.Value, &providerName); err != nil {
+		return nil, err
+	}
+	if err := ast.As(b.Value, &body); err != nil {
+		return nil, err
+	}
+
+	provider, err := d.providerCache.Get(providerName)
+	if err != nil {
+		return nil, fmt.Errorf("unable to retrieve provider %v from cache", providerName)
+	}
+
+	key := externaldata.ProviderCacheKey{
+		ProviderName: providerName,
+		OutboundData: body,
+	}
+	var v ast.Value
+	resp, err := d.providerCache.CheckCache(key)
+	if err != nil {
+		req, err := http.NewRequest("GET", provider.Spec.ProxyURL, bytes.NewBuffer([]byte(body)))
+		if err != nil {
+			return nil, err
+		}
+
+		ctx, cancel := context.WithDeadline(bctx.Context, time.Now().Add(time.Duration(provider.Spec.Timeout)*time.Second))
+		defer cancel()
+
+		resp, err := http.DefaultClient.Do(req.WithContext(ctx))
+		if err != nil {
+			return nil, err
+		}
+
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf(resp.Status)
+		}
+
+		v, err = ast.ValueFromReader(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		d.providerCache.InsertIntoCache(key, v.String())
+	} else {
+		t, err := ast.ParseTerm(resp)
+		v = t.Value
+		if err != nil {
+			return nil, err
+		}
+	}
+	return ast.NewTerm(v), nil
 }
 
 func copyModules(modules map[string]*ast.Module, filter string) map[string]*ast.Module {
