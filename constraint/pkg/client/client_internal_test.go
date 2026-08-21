@@ -1233,10 +1233,63 @@ func TestDriverForTemplate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result := client.driverForTemplate(test.template)
+			result := client.driverForTarget(test.template.Spec.Targets[0])
 			if result != test.expected {
 				t.Errorf("got %v; wanted %v", result, test.expected)
 			}
 		})
+	}
+}
+
+func TestMultiTargetTemplateRoutesDrivers(t *testing.T) {
+	ctx := context.Background()
+	template := cts.New(cts.OptTargets(
+		cts.TargetCustomEngines(
+			"h1",
+			cts.Code("driverA", (&schema.Source{RejectWith: "target A"}).ToUnstructured()),
+		),
+		cts.TargetCustomEngines(
+			"h2",
+			cts.Code("driverB", (&schema.Source{RejectWith: "target B"}).ToUnstructured()),
+		),
+	))
+	client, err := NewClient(
+		Targets(
+			&handlertest.Handler{Name: ptr.To("h1")},
+			&handlertest.Handler{Name: ptr.To("h2")},
+		),
+		Driver(fake.New("driverA")),
+		Driver(fake.New("driverB")),
+		EnforcementPoints("test"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := client.AddTemplate(ctx, template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(map[string]bool{"h1": true, "h2": true}, response.Handled); diff != "" {
+		t.Fatalf("unexpected handled targets (-want +got):\n%s", diff)
+	}
+
+	constraint := cts.MakeConstraint(t, cts.MockTemplate, "multi-target")
+	if _, err := client.AddConstraint(ctx, constraint); err != nil {
+		t.Fatal(err)
+	}
+
+	reviewResponse, err := client.Review(ctx, handlertest.NewReview("", "object", "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for target, driverName := range map[string]string{"h1": "driverA", "h2": "driverB"} {
+		got := reviewResponse.ByTarget[target]
+		if got == nil || len(got.Results) != 1 {
+			t.Fatalf("target %q got response %#v", target, got)
+		}
+		if !strings.Contains(got.Results[0].Msg, "rejected by driver "+driverName+":") {
+			t.Errorf("target %q routed to wrong driver: %q", target, got.Results[0].Msg)
+		}
 	}
 }

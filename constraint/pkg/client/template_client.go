@@ -22,6 +22,9 @@ type templateClient struct {
 	// targets are the Targets which this Template is executed for.
 	targets []handler.TargetHandler
 
+	// targetDrivers records the selected policy driver for each target.
+	targetDrivers map[string]string
+
 	// template is a copy of the original ConstraintTemplate added to Client.
 	template *templates.ConstraintTemplate
 
@@ -37,7 +40,7 @@ type templateClient struct {
 	// a driver switch, AddTemplate returns an error. We should preserve that state
 	// so that we know a constraint replay should be attempted the next time AddTemplate
 	// is called.
-	needsConstraintReplay bool
+	needsConstraintReplay map[string]bool
 
 	// activeDrivers keeps track of drivers that are in an ambiguous state due to a failed
 	// cross-driver update. This allows us to clean up stale state on old drivers.
@@ -46,8 +49,10 @@ type templateClient struct {
 
 func newTemplateClient() *templateClient {
 	return &templateClient{
-		constraints:   make(map[string]*constraintClient),
-		activeDrivers: make(map[string]bool),
+		constraints:           make(map[string]*constraintClient),
+		targetDrivers:         make(map[string]string),
+		needsConstraintReplay: make(map[string]bool),
+		activeDrivers:         make(map[string]bool),
 	}
 }
 
@@ -79,7 +84,7 @@ func (e *templateClient) getTemplate() *templates.ConstraintTemplate {
 	return e.template.DeepCopy()
 }
 
-func (e *templateClient) Update(templ *templates.ConstraintTemplate, crd *apiextensions.CustomResourceDefinition, targets ...handler.TargetHandler) {
+func (e *templateClient) Update(templ *templates.ConstraintTemplate, crd *apiextensions.CustomResourceDefinition, targetDrivers map[string]string, targets ...handler.TargetHandler) {
 	cpy := templ.DeepCopy()
 	cpy.Status = templates.ConstraintTemplateStatus{}
 
@@ -89,6 +94,14 @@ func (e *templateClient) Update(templ *templates.ConstraintTemplate, crd *apiext
 	e.template = cpy
 	e.crd = crd
 	e.targets = targets
+	e.targetDrivers = make(map[string]string, len(targetDrivers))
+	for target, driver := range targetDrivers {
+		e.targetDrivers[target] = driver
+	}
+}
+
+func (e *templateClient) driverForTarget(target string) string {
+	return e.targetDrivers[target]
 }
 
 // AddConstraint adds the Constraint to the Template.
@@ -191,14 +204,22 @@ func makeMatchers(targets []handler.TargetHandler, constraint *unstructured.Unst
 	return result, nil
 }
 
-// MatchesOperation checks if the given operation type matches any of the template's target operations.
-func (e *templateClient) MatchesOperation(operation string) bool {
-	if len(e.template.Spec.Targets) != 1 {
-		// for backward compatibility, matching all templates by default
-		return true
+// MatchesOperation checks if the given operation type matches the selected
+// target's configured operations.
+func (e *templateClient) MatchesOperation(targetName, operation string) bool {
+	if e.template == nil {
+		return false
 	}
-
-	target := e.template.Spec.Targets[0]
+	var target *templates.Target
+	for i := range e.template.Spec.Targets {
+		if e.template.Spec.Targets[i].Target == targetName {
+			target = &e.template.Spec.Targets[i]
+			break
+		}
+	}
+	if target == nil {
+		return false
+	}
 
 	// If no operations are specified, match all operations by default to maintain backward compatibility.
 	if len(target.Operations) == 0 {

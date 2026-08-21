@@ -72,15 +72,12 @@ type ARGetter interface {
 	GetAdmissionRequest() *admissionv1.AdmissionRequest
 }
 
-// driverForTemplate returns the driver to be used for a template according
-// to the driver priority in the client. An empty string means the constraint
-// template does not contain a language the client has a driver for.
-func (c *Client) driverForTemplate(template *templates.ConstraintTemplate) string {
-	if len(template.Spec.Targets) == 0 {
-		return ""
-	}
+// driverForTarget returns the driver to be used for a target according to the
+// driver priority in the client. An empty string means the target does not
+// contain a language the client has a driver for.
+func (c *Client) driverForTarget(target templates.Target) string {
 	language := ""
-	for _, v := range template.Spec.Targets[0].Code {
+	for _, v := range target.Code {
 		priority, ok := c.driverPriority[v.Engine]
 		if !ok {
 			continue
@@ -90,6 +87,42 @@ func (c *Client) driverForTemplate(template *templates.ConstraintTemplate) strin
 		}
 	}
 	return language
+}
+
+func (c *Client) targetDriversForTemplate(template *templates.ConstraintTemplate) (map[string]string, error) {
+	targetDrivers := make(map[string]string, len(template.Spec.Targets))
+	for _, target := range template.Spec.Targets {
+		driverName := c.driverForTarget(target)
+		if driverName == "" {
+			return nil, fmt.Errorf("%w: available drivers: %v, target %q has no supported engine", clienterrors.ErrNoDriver, c.driverPriority, target.Target)
+		}
+		targetDrivers[target.Target] = driverName
+	}
+	return targetDrivers, nil
+}
+
+func templateForDriver(template *templates.ConstraintTemplate, targetDrivers map[string]string, driverName string) *templates.ConstraintTemplate {
+	result := template.DeepCopy()
+	result.Spec.Targets = nil
+	for _, target := range template.Spec.Targets {
+		if targetDrivers[target.Target] == driverName {
+			result.Spec.Targets = append(result.Spec.Targets, *target.DeepCopy())
+		}
+	}
+	return result
+}
+
+func driverNames(targetDrivers map[string]string) []string {
+	set := make(map[string]struct{}, len(targetDrivers))
+	for _, driverName := range targetDrivers {
+		set[driverName] = struct{}{}
+	}
+	names := make([]string, 0, len(set))
+	for driverName := range set {
+		names = append(names, driverName)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // CreateCRD creates a CRD from template.
@@ -104,12 +137,12 @@ func (c *Client) CreateCRD(ctx context.Context, templ *templates.ConstraintTempl
 		return nil, err
 	}
 
-	target, err := c.getTargetHandler(templ)
+	targets, err := c.getTargetHandlers(templ)
 	if err != nil {
 		return nil, err
 	}
 
-	return createCRD(ctx, templ, target)
+	return createCRD(ctx, templ, targets...)
 }
 
 // AddTemplate adds the template source code to OPA and registers the CRD with the client for
@@ -121,8 +154,21 @@ func (c *Client) AddTemplate(ctx context.Context, templ *templates.ConstraintTem
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
-	// Return immediately if no change.
-	targetName, err := getTargetName(templ)
+	if templ == nil {
+		return resp, fmt.Errorf("%w: got nil ConstraintTemplate", clienterrors.ErrInvalidConstraintTemplate)
+	}
+	if err := validateTemplateMetadata(templ); err != nil {
+		return resp, err
+	}
+	targets, err := c.getTargetHandlers(templ)
+	if err != nil {
+		return resp, err
+	}
+	targetDrivers, err := c.targetDriversForTemplate(templ)
+	if err != nil {
+		return resp, err
+	}
+	crd, err := createCRD(ctx, templ, targets...)
 	if err != nil {
 		return resp, err
 	}
@@ -132,7 +178,7 @@ func (c *Client) AddTemplate(ctx context.Context, templ *templates.ConstraintTem
 	var oldTargets []string
 
 	cached := c.templates[templ.GetName()]
-	if cached != nil {
+	if cached != nil && cached.template != nil {
 		cachedCpy = cached.getTemplate()
 		hasConstraints = len(cached.constraints) > 0
 		for _, target := range cached.targets {
@@ -140,10 +186,11 @@ func (c *Client) AddTemplate(ctx context.Context, templ *templates.ConstraintTem
 		}
 	}
 
-	// if there is more than one active driver for the template, there is some cleanup to do
-	// from a botched driver swap.
-	if cachedCpy != nil && cachedCpy.SemanticEqual(templ) && len(cached.activeDrivers) == 1 {
-		resp.Handled[targetName] = true
+	desiredDrivers := driverNames(targetDrivers)
+	if cachedCpy != nil && cachedCpy.SemanticEqual(templ) && activeDriversMatch(cached, desiredDrivers) {
+		for targetName := range targetDrivers {
+			resp.Handled[targetName] = true
+		}
 		return resp, nil
 	}
 
@@ -169,106 +216,86 @@ func (c *Client) AddTemplate(ctx context.Context, templ *templates.ConstraintTem
 		}
 	}
 
-	err = validateTemplateMetadata(templ)
-	if err != nil {
-		return resp, err
-	}
-
-	target, err := c.getTargetHandler(templ)
-	if err != nil {
-		return resp, err
-	}
-
-	crd, err := createCRD(ctx, templ, target)
-	if err != nil {
-		return resp, err
-	}
-
-	newDriverN := c.driverForTemplate(templ)
-
-	driver, ok := c.drivers[newDriverN]
-	if !ok {
-		return resp, fmt.Errorf("%w: available drivers: %v, wanted %q", clienterrors.ErrNoDriver, c.driverPriority, c.driverForTemplate(templ))
-	}
-
-	// TODO: because different targets may have different code sets,
-	// the driver should be told which targets to load code for.
-	// this is moot right now, since templates only have one target
-	if err := driver.AddTemplate(ctx, templ); err != nil {
-		return resp, err
-	}
-
 	templateName := templ.GetName()
-
 	cacheEntry := c.templates[templateName]
-
-	// We don't want to use the usual "if found/ok" idiom here - if the value
-	// stored for templateName is nil, we need to update it to be non-nil to avoid
-	// a panic.
 	if cacheEntry == nil {
 		cacheEntry = newTemplateClient()
 		c.templates[templateName] = cacheEntry
 	}
 
-	cacheEntry.activeDrivers[newDriverN] = true
-
-	// For drivers that require a local cache of constraints, we ensure that
-	// cache is current if the active driver has changed.
-	if cachedCpy != nil {
-		oldDriverN := c.driverForTemplate(cachedCpy)
-		if oldDriverN != newDriverN {
-			cacheEntry.needsConstraintReplay = true
-		}
+	oldDesiredDrivers := make(map[string]struct{})
+	for _, driverName := range cacheEntry.targetDrivers {
+		oldDesiredDrivers[driverName] = struct{}{}
 	}
-
-	if cacheEntry.needsConstraintReplay {
-		for _, constraintEntry := range cacheEntry.constraints {
-			cstr := constraintEntry.getConstraint()
-			if err := driver.AddConstraint(ctx, cstr); err != nil {
-				return resp, fmt.Errorf("%w: while replaying constraints", err)
-			}
+	for _, driverName := range desiredDrivers {
+		driver, ok := c.drivers[driverName]
+		if !ok {
+			return resp, fmt.Errorf("%w: available drivers: %v, wanted %q", clienterrors.ErrNoDriver, c.driverPriority, driverName)
 		}
-		cacheEntry.needsConstraintReplay = false
+		if err := driver.AddTemplate(ctx, templateForDriver(templ, targetDrivers, driverName)); err != nil {
+			return resp, err
+		}
+		cacheEntry.activeDrivers[driverName] = true
+		if _, wasDesired := oldDesiredDrivers[driverName]; !wasDesired {
+			cacheEntry.needsConstraintReplay[driverName] = true
+		}
+		if cacheEntry.needsConstraintReplay[driverName] {
+			for _, constraintEntry := range cacheEntry.constraints {
+				cstr := constraintEntry.getConstraint()
+				if err := driver.AddConstraint(ctx, cstr); err != nil {
+					return resp, fmt.Errorf("%w: while replaying constraints to driver %q", err, driverName)
+				}
+			}
+			delete(cacheEntry.needsConstraintReplay, driverName)
+		}
 	}
 
 	// This state mutation needs to happen after the new driver is fully ready
 	// to enforce the template
-	cacheEntry.Update(templ, crd, target)
+	cacheEntry.Update(templ, crd, targetDrivers, targets...)
 
 	// Remove old drivers last so that templates can be enforced
 	// despite a botched update
 	for oldDriverN := range cacheEntry.activeDrivers {
-		if oldDriverN == newDriverN {
+		if containsString(desiredDrivers, oldDriverN) {
 			continue
 		}
 		oldDriver, ok := c.drivers[oldDriverN]
 		if !ok {
 			return resp, fmt.Errorf("%w: while changing drivers", clienterrors.ErrNoDriver)
 		}
-		if err := oldDriver.RemoveTemplate(ctx, cachedCpy); err != nil {
+		removeTemplate := cachedCpy
+		if removeTemplate == nil {
+			removeTemplate = templ
+		}
+		if err := oldDriver.RemoveTemplate(ctx, removeTemplate); err != nil {
 			return resp, fmt.Errorf("%w: while changing drivers", err)
 		}
 		delete(cacheEntry.activeDrivers, oldDriverN)
+		delete(cacheEntry.needsConstraintReplay, oldDriverN)
 	}
 
-	resp.Handled[targetName] = true
+	for targetName := range targetDrivers {
+		resp.Handled[targetName] = true
+	}
 	return resp, nil
 }
 
-func getTargetName(templ *templates.ConstraintTemplate) (string, error) {
-	targets := templ.Spec.Targets
-
-	if len(targets) != 1 {
-		return "", fmt.Errorf("%w: must declare exactly one target",
-			clienterrors.ErrInvalidConstraintTemplate)
+func activeDriversMatch(template *templateClient, desired []string) bool {
+	if len(template.activeDrivers) != len(desired) || len(template.needsConstraintReplay) != 0 {
+		return false
 	}
-
-	if targets[0].Target == "" {
-		return "", fmt.Errorf("%w: target name must not be empty",
-			clienterrors.ErrInvalidConstraintTemplate)
+	for _, driverName := range desired {
+		if !template.activeDrivers[driverName] {
+			return false
+		}
 	}
+	return true
+}
 
-	return targets[0].Target, nil
+func containsString(values []string, wanted string) bool {
+	index := sort.SearchStrings(values, wanted)
+	return index < len(values) && values[index] == wanted
 }
 
 // RemoveTemplate removes the template source code from OPA and removes the CRD from the validation
@@ -289,6 +316,9 @@ func (c *Client) RemoveTemplate(ctx context.Context, templ *templates.Constraint
 	}
 
 	template := cached.getTemplate()
+	if template == nil {
+		template = templ
+	}
 
 	// remove the template from all active drivers
 	// to ensure cleanup in case of a botched update
@@ -331,6 +361,10 @@ func (c *Client) GetTemplate(templ *templates.ConstraintTemplate) (*templates.Co
 		return nil, templateNotFound(name)
 	}
 
+	if template.template == nil {
+		return nil, templateNotFound(name)
+	}
+
 	return template.getTemplate(), nil
 }
 
@@ -362,13 +396,6 @@ func (c *Client) AddConstraint(ctx context.Context, constraint *unstructured.Uns
 		return resp, templateNotFound(templateName)
 	}
 
-	template := cached.getTemplate()
-
-	driver, ok := c.drivers[c.driverForTemplate(template)]
-	if !ok {
-		return resp, clienterrors.ErrNoDriver
-	}
-
 	constraintWithDefaults, err := cached.ApplyDefaultParams(constraint)
 	if err != nil {
 		return resp, err
@@ -380,9 +407,14 @@ func (c *Client) AddConstraint(ctx context.Context, constraint *unstructured.Uns
 	}
 
 	if changed {
-		err = driver.AddConstraint(ctx, constraintWithDefaults)
-		if err != nil {
-			return resp, err
+		for _, driverName := range driverNames(cached.targetDrivers) {
+			driver, ok := c.drivers[driverName]
+			if !ok {
+				return resp, clienterrors.ErrNoDriver
+			}
+			if err = driver.AddConstraint(ctx, constraintWithDefaults); err != nil {
+				return resp, err
+			}
 		}
 	}
 
@@ -686,38 +718,25 @@ func (c *Client) Review(ctx context.Context, obj interface{}, opts ...reviews.Re
 	scopedEnforcementActionsByTarget := make(map[string]map[string][]string)
 	enforcementActionByTarget := make(map[string]map[string]string)
 
-	var templateList []*templateClient
-
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()
-
-	for _, template := range c.templates {
-		if cfg.EnforcementPoint == apiconstraints.WebhookEnforcementPoint {
-			// for backward compatibility, matching all templates by default
-			operationMatched := true
-			for _, review := range reviews {
-				arGetter, ok := review.(ARGetter)
-				if !ok {
-					continue
-				}
-				req := arGetter.GetAdmissionRequest()
-				if !template.MatchesOperation(string(req.Operation)) {
-					operationMatched = false
-					break
-				}
-			}
-			if !operationMatched {
-				continue
-			}
-		}
-		templateList = append(templateList, template)
-	}
 
 	for target, review := range reviews {
 		var targetConstraints []*unstructured.Unstructured
 		targetScopedEnforcementActions := make(map[string][]string)
 		targetEnforcementAction := make(map[string]string)
-		for _, template := range templateList {
+		for _, template := range c.templates {
+			if template.template == nil {
+				continue
+			}
+			if cfg.EnforcementPoint == apiconstraints.WebhookEnforcementPoint {
+				if arGetter, ok := review.(ARGetter); ok {
+					req := arGetter.GetAdmissionRequest()
+					if !template.MatchesOperation(target, string(req.Operation)) {
+						continue
+					}
+				}
+			}
 			matchingConstraints := template.Matches(target, review, eps)
 			for _, matchResult := range matchingConstraints {
 				if matchResult.error == nil {
@@ -794,7 +813,7 @@ func (c *Client) review(ctx context.Context, target string, constraints []*unstr
 		if !ok {
 			return nil, nil, fmt.Errorf("%w: while loading driver for constraint %s", ErrMissingConstraintTemplate, constraint.GetName())
 		}
-		driver := c.driverForTemplate(template.template)
+		driver := template.driverForTarget(target)
 		if driver == "" {
 			return nil, nil, fmt.Errorf("%w: while loading driver for constraint %s", clienterrors.ErrNoDriver, constraint.GetName())
 		}
@@ -891,31 +910,37 @@ func (c *Client) knownTargets() []string {
 	return knownTargets
 }
 
-// getTargetHandler returns the TargetHandler for the Template, or an error if
-// it does not exist.
+// getTargetHandlers returns the TargetHandlers for the Template, or an error if
+// any target does not exist.
 //
 // The set of targets is assumed to be constant.
-func (c *Client) getTargetHandler(templ *templates.ConstraintTemplate) (handler.TargetHandler, error) {
-	targetName, err := getTargetName(templ)
-	if err != nil {
+func (c *Client) getTargetHandlers(templ *templates.ConstraintTemplate) ([]handler.TargetHandler, error) {
+	if err := crds.ValidateTargets(templ); err != nil {
 		return nil, err
 	}
 
-	targetHandler, found := c.targets[targetName]
-
-	if !found {
-		knownTargets := c.knownTargets()
-
-		return nil, fmt.Errorf("%w: target %q not recognized, known targets %v",
-			clienterrors.ErrInvalidConstraintTemplate, targetName, knownTargets)
+	handlers := make([]handler.TargetHandler, 0, len(templ.Spec.Targets))
+	for _, target := range templ.Spec.Targets {
+		targetHandler, found := c.targets[target.Target]
+		if !found {
+			return nil, fmt.Errorf("%w: target %q not recognized, known targets %v",
+				clienterrors.ErrInvalidConstraintTemplate, target.Target, c.knownTargets())
+		}
+		handlers = append(handlers, targetHandler)
 	}
-
-	return targetHandler, nil
+	return handlers, nil
 }
 
 // createCRD creates the Template's CRD and validates the result.
-func createCRD(ctx context.Context, templ *templates.ConstraintTemplate, target handler.TargetHandler) (*apiextensions.CustomResourceDefinition, error) {
-	sch := crds.CreateSchema(templ, target)
+func createCRD(ctx context.Context, templ *templates.ConstraintTemplate, targets ...handler.TargetHandler) (*apiextensions.CustomResourceDefinition, error) {
+	providers := make([]crds.MatchSchemaProvider, len(targets))
+	for i, target := range targets {
+		providers[i] = target
+	}
+	sch, err := crds.CreateSchemaForTargets(templ, providers...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", clienterrors.ErrInvalidConstraintTemplate, err)
+	}
 
 	crd, err := crds.CreateCRD(templ, sch)
 	if err != nil {

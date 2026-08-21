@@ -33,16 +33,25 @@ func ValidateTargets(templ *templates.ConstraintTemplate) error {
 			clienterrors.ErrInvalidConstraintTemplate)
 	}
 
-	switch len(targets) {
-	case 0:
+	if len(targets) == 0 {
 		return fmt.Errorf("%w: no targets specified: ConstraintTemplate must specify one target",
 			clienterrors.ErrInvalidConstraintTemplate)
-	case 1:
-		return nil
-	default:
-		return fmt.Errorf("%w: multi-target templates are not currently supported",
-			clienterrors.ErrInvalidConstraintTemplate)
 	}
+
+	seen := make(map[string]struct{}, len(targets))
+	for i, target := range targets {
+		if target.Target == "" {
+			return fmt.Errorf("%w: target %d has an empty name",
+				clienterrors.ErrInvalidConstraintTemplate, i)
+		}
+		if _, found := seen[target.Target]; found {
+			return fmt.Errorf("%w: target %q is declared more than once",
+				clienterrors.ErrInvalidConstraintTemplate, target.Target)
+		}
+		seen[target.Target] = struct{}{}
+	}
+
+	return nil
 }
 
 // ValidateCRD calls the CRD package's validation on an internal representation of the CRD.

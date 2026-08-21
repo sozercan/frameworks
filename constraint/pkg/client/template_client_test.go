@@ -16,11 +16,11 @@ func TestTemplateClient_MatchesOperation(t *testing.T) {
 		description string
 	}{
 		{
-			name:        "no targets - returns true for backward compatibility",
+			name:        "no targets do not match",
 			targets:     []templates.Target{},
 			operation:   "CREATE",
-			expected:    true,
-			description: "when no targets are defined, should return true for backward compatibility",
+			expected:    false,
+			description: "when no targets are defined, no target can match",
 		},
 		{
 			name: "multiple targets - returns true for backward compatibility",
@@ -157,7 +157,11 @@ func TestTemplateClient_MatchesOperation(t *testing.T) {
 				},
 			}
 
-			result := tc.MatchesOperation(tt.operation)
+			targetName := "missing"
+			if len(tt.targets) != 0 {
+				targetName = tt.targets[0].Target
+			}
+			result := tc.MatchesOperation(targetName, tt.operation)
 
 			if result != tt.expected {
 				t.Errorf("MatchesOperation(%q) = %v, expected %v\nDescription: %s",
@@ -181,7 +185,7 @@ func TestTemplateClient_MatchesOperation_EdgeCases(t *testing.T) {
 		}()
 
 		// If it doesn't panic, it should return false or handle gracefully
-		result := tc.MatchesOperation("CREATE")
+		result := tc.MatchesOperation("missing", "CREATE")
 		t.Logf("Result with nil template: %v", result)
 	})
 
@@ -191,8 +195,8 @@ func TestTemplateClient_MatchesOperation_EdgeCases(t *testing.T) {
 		}
 
 		// Should handle gracefully when spec is not initialized
-		result := tc.MatchesOperation("CREATE")
-		expected := true // Should return true for backward compatibility when no targets
+		result := tc.MatchesOperation("missing", "CREATE")
+		expected := false
 		if result != expected {
 			t.Errorf("MatchesOperation with nil spec = %v, expected %v", result, expected)
 		}
@@ -210,7 +214,7 @@ func TestTemplateClient_MatchesOperation_BackwardCompatibility(t *testing.T) {
 			name:        "zero targets",
 			targetCount: 0,
 			operation:   "CREATE",
-			expected:    true,
+			expected:    false,
 		},
 		{
 			name:        "two targets",
@@ -243,13 +247,36 @@ func TestTemplateClient_MatchesOperation_BackwardCompatibility(t *testing.T) {
 				},
 			}
 
-			result := tc.MatchesOperation(tt.operation)
+			targetName := "missing"
+			if len(targets) != 0 {
+				targetName = targets[0].Target
+			}
+			result := tc.MatchesOperation(targetName, tt.operation)
 
 			if result != tt.expected {
 				t.Errorf("MatchesOperation with %d targets = %v, expected %v (backward compatibility)",
 					tt.targetCount, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestTemplateClient_MatchesOperationByTarget(t *testing.T) {
+	tc := &templateClient{template: &templates.ConstraintTemplate{
+		Spec: templates.ConstraintTemplateSpec{Targets: []templates.Target{
+			{Target: "admission", Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create}},
+			{Target: "runtime", Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update}},
+		}},
+	}}
+
+	if !tc.MatchesOperation("admission", "CREATE") || tc.MatchesOperation("admission", "UPDATE") {
+		t.Error("admission target operation filtering is not target-specific")
+	}
+	if !tc.MatchesOperation("runtime", "UPDATE") || tc.MatchesOperation("runtime", "CREATE") {
+		t.Error("runtime target operation filtering is not target-specific")
+	}
+	if tc.MatchesOperation("unknown", "CREATE") {
+		t.Error("unknown target unexpectedly matched")
 	}
 }
 
@@ -275,6 +302,6 @@ func BenchmarkTemplateClient_MatchesOperation(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tc.MatchesOperation("UPDATE")
+		tc.MatchesOperation("admission.k8s.gatekeeper.sh", "UPDATE")
 	}
 }

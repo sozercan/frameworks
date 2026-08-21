@@ -136,11 +136,11 @@ func TestValidateTemplate(t *testing.T) {
 			ErrorExpected: true,
 		},
 		{
-			Name: "Two Targets Fails",
+			Name: "Two Targets Succeed",
 			Template: cts.New(cts.OptTargets(
 				cts.Target("fooTarget", cts.ModuleDeny),
 				cts.Target("barTarget", cts.ModuleDeny))),
-			ErrorExpected: true,
+			ErrorExpected: false,
 		},
 	}
 	for _, tc := range tests {
@@ -213,6 +213,35 @@ func TestCreateSchema(t *testing.T) {
 				t.Errorf("Unexpected schema output.  Diff: %v", diff)
 			}
 		})
+	}
+}
+
+func TestCreateSchemaForTargetsMergesMatchProperties(t *testing.T) {
+	template := cts.New()
+	first := createTestTargetHandler(matchSchema(cts.PropMap{
+		"shared": cts.Prop(cts.PropMap{"first": cts.PropTyped("string")}),
+		"one":    cts.PropTyped("string"),
+	}))
+	second := createTestTargetHandler(matchSchema(cts.PropMap{
+		"shared": cts.Prop(cts.PropMap{"second": cts.PropTyped("boolean")}),
+		"two":    cts.PropTyped("integer"),
+	}))
+
+	schema, err := crds.CreateSchemaForTargets(template, first, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := schema.Properties["spec"].Properties["match"]
+	for _, property := range []string{"one", "two", "shared"} {
+		if _, found := match.Properties[property]; !found {
+			t.Errorf("merged match schema is missing property %q", property)
+		}
+	}
+	shared := match.Properties["shared"]
+	for _, property := range []string{"first", "second"} {
+		if _, found := shared.Properties[property]; !found {
+			t.Errorf("merged shared schema is missing property %q", property)
+		}
 	}
 }
 
